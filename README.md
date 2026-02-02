@@ -120,9 +120,9 @@ The base64 string decodes to:
 {
   "results": [
     {
-      "clusterId": "OnOff",
-      "endpointId": "1",
-      "attributeId": "on-off",
+      "clusterId": 6,
+      "endpointId": 1,
+      "attributeId": 0,
       "value": true
     }
   ],
@@ -135,6 +135,12 @@ The base64 string decodes to:
   ]
 }
 ```
+
+**Note**: 
+- `clusterId` is numeric (OnOff cluster = 6 = 0x0006)
+- `endpointId` is numeric (parsed from string argument)
+- `attributeId` is numeric (on-off attribute = 0)
+- `value` is the boolean state
 
 The log message is base64-encoded. Decoded: `"Read OnOff attribute from endpoint 1: ON"`
 

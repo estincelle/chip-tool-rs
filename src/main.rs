@@ -377,11 +377,16 @@ fn create_onoff_read_response(destination_id: &str, endpoint_id: &str, on_state:
     );
     let encoded_log = BASE64.encode(log_message.as_bytes());
 
+    // OnOff cluster ID is 0x0006 (6 in decimal)
+    // Parse endpoint_id as integer, default to 1 if parsing fails
+    let endpoint_num: u16 = endpoint_id.parse().unwrap_or(1);
+
     // Create a result object with the attribute value
+    // Format matches chip-tool's actual response format
     let result = serde_json::json!({
-        "clusterId": "OnOff",
-        "endpointId": endpoint_id,
-        "attributeId": "on-off",
+        "clusterId": 6,
+        "endpointId": endpoint_num,
+        "attributeId": 0,  // on-off attribute ID is 0
         "value": on_state
     });
 
