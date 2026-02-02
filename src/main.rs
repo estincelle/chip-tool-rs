@@ -69,6 +69,16 @@ struct OnOffReadArgs {
     endpoint_ids: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct OnOffWriteArgs {
+    #[serde(rename = "destination-id")]
+    destination_id: String,
+    #[serde(rename = "endpoint-id-ignored-for-group-commands")]
+    endpoint_id: String,
+    #[serde(rename = "attribute-values")]
+    attribute_values: String,
+}
+
 #[derive(Debug, Serialize)]
 struct ResponseMessage {
     results: Vec<serde_json::Value>,
@@ -256,6 +266,7 @@ fn process_command(message: &str) -> Option<String> {
     match (cmd.cluster.to_lowercase().as_str(), cmd.command.as_str()) {
         ("delay", "wait-for-commissionee") => handle_wait_for_commissionee(&cmd.arguments),
         ("onoff", "read") => handle_onoff_read(&cmd.arguments),
+        ("onoff", "write") => handle_onoff_write(&cmd.arguments, &cmd.command_specifier),
         _ => Some(create_error_response(&format!(
             "Unknown command: {} {}",
             cmd.cluster, cmd.command
@@ -349,6 +360,58 @@ fn handle_onoff_read(arguments: &str) -> Option<String> {
     ))
 }
 
+/// Handle the onoff write command
+fn handle_onoff_write(arguments: &str, command_specifier: &Option<String>) -> Option<String> {
+    // Decode base64 arguments
+    let decoded_args = if let Some(base64_data) = arguments.strip_prefix("base64:") {
+        match BASE64.decode(base64_data) {
+            Ok(data) => match String::from_utf8(data) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to decode base64 as UTF-8: {}", e);
+                    return Some(create_error_response("Invalid base64 encoding"));
+                }
+            },
+            Err(e) => {
+                tracing::error!("Failed to decode base64: {}", e);
+                return Some(create_error_response("Invalid base64 format"));
+            }
+        }
+    } else {
+        tracing::error!("Arguments missing 'base64:' prefix");
+        return Some(create_error_response("Arguments must be base64 encoded"));
+    };
+
+    tracing::debug!("Decoded arguments: {}", decoded_args);
+
+    // Parse the decoded arguments
+    let args: OnOffWriteArgs = match serde_json::from_str(&decoded_args) {
+        Ok(args) => args,
+        Err(e) => {
+            tracing::error!("Failed to parse arguments JSON: {}", e);
+            return Some(create_error_response("Invalid arguments format"));
+        }
+    };
+
+    let attribute_name = command_specifier.as_deref().unwrap_or("unknown");
+
+    tracing::info!(
+        "Writing onoff attribute '{}' for destination: {}, endpoint: {}, value: {}",
+        attribute_name,
+        args.destination_id,
+        args.endpoint_id,
+        args.attribute_values
+    );
+
+    // Simulate writing the attribute
+    Some(create_onoff_write_response(
+        &args.destination_id,
+        &args.endpoint_id,
+        attribute_name,
+        &args.attribute_values,
+    ))
+}
+
 /// Create a success response for wait-for-commissionee
 fn create_success_response(node_id: &str) -> String {
     let log_message = format!("Device {} connected successfully", node_id);
@@ -388,6 +451,54 @@ fn create_onoff_read_response(destination_id: &str, endpoint_id: &str, on_state:
         "endpointId": endpoint_num,
         "attributeId": 0,  // on-off attribute ID is 0
         "value": on_state
+    });
+
+    let response = ResponseMessage {
+        results: vec![result],
+        logs: vec![LogEntry {
+            module: "chipTool".to_string(),
+            category: "Info".to_string(),
+            message: encoded_log,
+        }],
+    };
+
+    serde_json::to_string(&response).unwrap_or_else(|_| {
+        r#"{"results":[{"error":"FAILURE"}],"logs":[{"module":"chipTool","category":"Error","message":"RmFpbGVkIHRvIHNlcmlhbGl6ZSByZXNwb25zZQ=="}]}"#.to_string()
+    })
+}
+
+/// Create a response for onoff write command
+fn create_onoff_write_response(
+    destination_id: &str,
+    endpoint_id: &str,
+    attribute_name: &str,
+    value: &str,
+) -> String {
+    let log_message = format!(
+        "Write OnOff attribute '{}' to endpoint {}: value={}",
+        attribute_name, endpoint_id, value
+    );
+    let encoded_log = BASE64.encode(log_message.as_bytes());
+
+    // OnOff cluster ID is 0x0006 (6 in decimal)
+    // Parse endpoint_id as integer, default to 1 if parsing fails
+    let endpoint_num: u16 = endpoint_id.parse().unwrap_or(1);
+
+    // Map attribute name to attribute ID
+    // on-time is attribute 0x4001 (16385 in decimal)
+    let attribute_id = match attribute_name {
+        "on-time" => 16385,
+        "off-wait-time" => 16386,
+        _ => 0,
+    };
+
+    // Create a result object for the write operation
+    // Write operations typically return status
+    let result = serde_json::json!({
+        "clusterId": 6,
+        "endpointId": endpoint_num,
+        "attributeId": attribute_id,
+        "status": 0  // 0 = SUCCESS in Matter
     });
 
     let response = ResponseMessage {
