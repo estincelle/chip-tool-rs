@@ -37,6 +37,9 @@ enum InteractiveMode {
         /// Port the websocket will listen to. Defaults to 9002.
         #[arg(long, default_value_t = 9002)]
         port: u16,
+        /// Enable tracing of all exchanged messages. 0 = off, 1 = on
+        #[arg(long = "trace_decode")]
+        trace_decode: u8,
     },
 }
 
@@ -55,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Commands::Interactive { mode } => match mode {
-            InteractiveMode::Server { port } => {
+            InteractiveMode::Server { port, .. } => {
                 run_server(port).await?;
             }
         },
