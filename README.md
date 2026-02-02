@@ -10,6 +10,7 @@ A Rust implementation of `chip-tool interactive server` that provides a WebSocke
 - Realistic response generation matching chip-tool's format
 - Support for the `delay` cluster's `wait-for-commissionee` command
 - Connection logging and management
+- **File logging** - All logs written to `chip-tool-rs.log` next to the binary
 
 ## Usage
 
@@ -149,9 +150,41 @@ Command sent, waiting for response...
 ✅ Command SUCCESSFUL
 ```
 
+## Logging
+
+The server logs to two destinations:
+
+1. **Console (stdout)** - Real-time output for monitoring
+2. **Log file** - Persistent logs written to `chip-tool-rs.log` in the same directory as the binary
+
+### Log File Location
+
+- **Development**: `target/debug/chip-tool-rs.log` or `target/release/chip-tool-rs.log`
+- **Installed Binary**: Same directory as the `chip-tool-rs` executable
+
+On startup, the server prints the log file location:
+```
+Logging to file: /path/to/chip-tool-rs.log
+```
+
+### Setting Log Level
+
+Use the `RUST_LOG` environment variable to control log verbosity:
+
+```bash
+# Info level (default)
+cargo run -- interactive server
+
+# Debug level for detailed logging
+RUST_LOG=chip_tool_rs=debug cargo run -- interactive server
+
+# Trace level for maximum verbosity
+RUST_LOG=chip_tool_rs=trace cargo run -- interactive server
+```
+
 ## Server Output
 
-When a client connects and sends commands, the server will print:
+When a client connects and sends commands, the server will print to both console and log file:
 
 ```
 == WebSocket Server Ready

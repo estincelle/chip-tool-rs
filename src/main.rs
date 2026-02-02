@@ -12,7 +12,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// A Rust implementation of chip-tool's interactive server
 #[derive(Parser)]
@@ -79,14 +79,29 @@ struct ErrorResult {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Get the directory of the executing binary
+    let exe_path = std::env::current_exe()?;
+    let exe_dir = exe_path
+        .parent()
+        .ok_or("Failed to get executable directory")?;
+
+    // Create log file appender in the same directory as the binary
+    let log_file_name = "chip-tool-rs.log";
+    let file_appender = tracing_appender::rolling::never(exe_dir, log_file_name);
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    // Set up tracing with both console and file output
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| format!("{}=info,tower_http=info", env!("CARGO_CRATE_NAME")).into());
+
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                format!("{}=info,tower_http=info", env!("CARGO_CRATE_NAME")).into()
-            }),
-        )
-        .with(tracing_subscriber::fmt::layer())
+        .with(env_filter)
+        .with(fmt::layer().with_writer(std::io::stdout)) // Console output
+        .with(fmt::layer().with_writer(non_blocking).with_ansi(false)) // File output
         .init();
+
+    let log_path = exe_dir.join(log_file_name);
+    tracing::info!("Logging to file: {}", log_path.display());
 
     let cli = Cli::parse();
 
