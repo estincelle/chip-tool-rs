@@ -72,6 +72,7 @@ async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
+    println!("== WebSocket Server Ready");
     println!("WebSocket server listening on {}", addr);
     println!("Waiting for connections...");
 
