@@ -55,6 +55,11 @@ Send JSON messages to the WebSocket server in this format:
 }
 ```
 
+**Note**: The server also accepts messages with a `json:` prefix (used by the YAML test runner):
+```
+json:{"cluster": "delay", "command": "wait-for-commissionee", ...}
+```
+
 ### Supported Commands
 
 #### `delay wait-for-commissionee`

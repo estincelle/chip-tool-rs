@@ -218,8 +218,11 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr) {
 
 /// Process incoming commands and generate realistic chip-tool responses
 fn process_command(message: &str) -> Option<String> {
+    // Strip the "json:" prefix if present (used by YAML test runner)
+    let json_message = message.strip_prefix("json:").unwrap_or(message);
+
     // Parse the command message
-    let cmd: CommandMessage = match serde_json::from_str(message) {
+    let cmd: CommandMessage = match serde_json::from_str(json_message) {
         Ok(cmd) => cmd,
         Err(e) => {
             tracing::error!("Failed to parse command JSON: {}", e);
