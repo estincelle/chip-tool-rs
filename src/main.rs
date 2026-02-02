@@ -265,7 +265,7 @@ fn process_command(message: &str) -> Option<String> {
     // Handle different cluster/command combinations
     match (cmd.cluster.to_lowercase().as_str(), cmd.command.as_str()) {
         ("delay", "wait-for-commissionee") => handle_wait_for_commissionee(&cmd.arguments),
-        ("onoff", "read") => handle_onoff_read(&cmd.arguments),
+        ("onoff", "read") => handle_onoff_read(&cmd.arguments, &cmd.command_specifier),
         ("onoff", "write") => handle_onoff_write(&cmd.arguments, &cmd.command_specifier),
         _ => Some(create_error_response(&format!(
             "Unknown command: {} {}",
@@ -314,7 +314,7 @@ fn handle_wait_for_commissionee(arguments: &str) -> Option<String> {
 }
 
 /// Handle the onoff read command
-fn handle_onoff_read(arguments: &str) -> Option<String> {
+fn handle_onoff_read(arguments: &str, command_specifier: &Option<String>) -> Option<String> {
     // Decode base64 arguments
     let decoded_args = if let Some(base64_data) = arguments.strip_prefix("base64:") {
         match BASE64.decode(base64_data) {
@@ -346,17 +346,20 @@ fn handle_onoff_read(arguments: &str) -> Option<String> {
         }
     };
 
+    let attribute_name = command_specifier.as_deref().unwrap_or("on-off");
+
     tracing::info!(
-        "Reading onoff attribute for destination: {}, endpoint: {}",
+        "Reading onoff attribute '{}' for destination: {}, endpoint: {}",
+        attribute_name,
         args.destination_id,
         args.endpoint_ids
     );
 
-    // Simulate reading the on-off attribute (returning "on" state)
+    // Simulate reading the attribute based on command_specifier
     Some(create_onoff_read_response(
         &args.destination_id,
         &args.endpoint_ids,
-        true,
+        attribute_name,
     ))
 }
 
@@ -432,25 +435,49 @@ fn create_success_response(node_id: &str) -> String {
 }
 
 /// Create a response for onoff read command
-fn create_onoff_read_response(destination_id: &str, endpoint_id: &str, on_state: bool) -> String {
-    let log_message = format!(
-        "Read OnOff attribute from endpoint {}: {}",
-        endpoint_id,
-        if on_state { "ON" } else { "OFF" }
-    );
-    let encoded_log = BASE64.encode(log_message.as_bytes());
-
+fn create_onoff_read_response(
+    destination_id: &str,
+    endpoint_id: &str,
+    attribute_name: &str,
+) -> String {
     // OnOff cluster ID is 0x0006 (6 in decimal)
     // Parse endpoint_id as integer, default to 1 if parsing fails
     let endpoint_num: u16 = endpoint_id.parse().unwrap_or(1);
+
+    // Map attribute name to attribute ID and determine value type
+    let (attribute_id, value): (u16, serde_json::Value) = match attribute_name {
+        "on-off" => {
+            // on-off attribute ID is 0, returns boolean
+            (0, serde_json::json!(true))
+        }
+        "on-time" => {
+            // on-time attribute ID is 0x4001 (16385), returns uint16 (in centiseconds)
+            // Simulating value of 30 (0.3 seconds)
+            (16385, serde_json::json!(30))
+        }
+        "off-wait-time" => {
+            // off-wait-time attribute ID is 0x4002 (16386), returns uint16
+            (16386, serde_json::json!(0))
+        }
+        _ => {
+            // Default to on-off
+            (0, serde_json::json!(true))
+        }
+    };
+
+    let log_message = format!(
+        "Read OnOff attribute '{}' from endpoint {}: {}",
+        attribute_name, endpoint_id, value
+    );
+    let encoded_log = BASE64.encode(log_message.as_bytes());
 
     // Create a result object with the attribute value
     // Format matches chip-tool's actual response format
     let result = serde_json::json!({
         "clusterId": 6,
         "endpointId": endpoint_num,
-        "attributeId": 0,  // on-off attribute ID is 0
-        "value": on_state
+        "attributeId": attribute_id,
+        "value": value
     });
 
     let response = ResponseMessage {
