@@ -63,7 +63,7 @@ async def test_onoff_write():
                     print(f"Cluster: {result.get('clusterId')}")
                     print(f"Endpoint: {result.get('endpointId')}")
                     print(f"Attribute: {result.get('attributeId')}")
-                    print(f"Status: {result.get('status')} (0=SUCCESS)")
+                    print(f"Success: No error field present")
         
         print("\n✅ onoff write command SUCCESSFUL")
         return True

@@ -493,12 +493,12 @@ fn create_onoff_write_response(
     };
 
     // Create a result object for the write operation
-    // Write operations typically return status
+    // For successful writes, only return clusterId, endpointId, and attributeId
+    // (no status or error field - absence of error indicates success)
     let result = serde_json::json!({
         "clusterId": 6,
         "endpointId": endpoint_num,
-        "attributeId": attribute_id,
-        "status": 0  // 0 = SUCCESS in Matter
+        "attributeId": attribute_id
     });
 
     let response = ResponseMessage {
