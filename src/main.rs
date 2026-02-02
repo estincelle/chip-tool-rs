@@ -51,12 +51,22 @@ struct CommandMessage {
     cluster: String,
     command: String,
     arguments: String,
+    #[serde(rename = "command_specifier")]
+    command_specifier: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct WaitForCommissioneeArgs {
     #[serde(rename = "nodeId")]
     node_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OnOffReadArgs {
+    #[serde(rename = "destination-id")]
+    destination_id: String,
+    #[serde(rename = "endpoint-ids")]
+    endpoint_ids: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -233,14 +243,19 @@ fn process_command(message: &str) -> Option<String> {
     };
 
     tracing::info!(
-        "Processing command: cluster={}, command={}",
+        "Processing command: cluster={}, command={}{}",
         cmd.cluster,
-        cmd.command
+        cmd.command,
+        cmd.command_specifier
+            .as_ref()
+            .map(|s| format!(" (specifier: {})", s))
+            .unwrap_or_default()
     );
 
     // Handle different cluster/command combinations
     match (cmd.cluster.to_lowercase().as_str(), cmd.command.as_str()) {
         ("delay", "wait-for-commissionee") => handle_wait_for_commissionee(&cmd.arguments),
+        ("onoff", "read") => handle_onoff_read(&cmd.arguments),
         _ => Some(create_error_response(&format!(
             "Unknown command: {} {}",
             cmd.cluster, cmd.command
@@ -287,6 +302,53 @@ fn handle_wait_for_commissionee(arguments: &str) -> Option<String> {
     Some(create_success_response(&args.node_id))
 }
 
+/// Handle the onoff read command
+fn handle_onoff_read(arguments: &str) -> Option<String> {
+    // Decode base64 arguments
+    let decoded_args = if let Some(base64_data) = arguments.strip_prefix("base64:") {
+        match BASE64.decode(base64_data) {
+            Ok(data) => match String::from_utf8(data) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to decode base64 as UTF-8: {}", e);
+                    return Some(create_error_response("Invalid base64 encoding"));
+                }
+            },
+            Err(e) => {
+                tracing::error!("Failed to decode base64: {}", e);
+                return Some(create_error_response("Invalid base64 format"));
+            }
+        }
+    } else {
+        tracing::error!("Arguments missing 'base64:' prefix");
+        return Some(create_error_response("Arguments must be base64 encoded"));
+    };
+
+    tracing::debug!("Decoded arguments: {}", decoded_args);
+
+    // Parse the decoded arguments
+    let args: OnOffReadArgs = match serde_json::from_str(&decoded_args) {
+        Ok(args) => args,
+        Err(e) => {
+            tracing::error!("Failed to parse arguments JSON: {}", e);
+            return Some(create_error_response("Invalid arguments format"));
+        }
+    };
+
+    tracing::info!(
+        "Reading onoff attribute for destination: {}, endpoint: {}",
+        args.destination_id,
+        args.endpoint_ids
+    );
+
+    // Simulate reading the on-off attribute (returning "on" state)
+    Some(create_onoff_read_response(
+        &args.destination_id,
+        &args.endpoint_ids,
+        true,
+    ))
+}
+
 /// Create a success response for wait-for-commissionee
 fn create_success_response(node_id: &str) -> String {
     let log_message = format!("Device {} connected successfully", node_id);
@@ -303,6 +365,37 @@ fn create_success_response(node_id: &str) -> String {
 
     serde_json::to_string(&response).unwrap_or_else(|_| {
         r#"{"results":[],"logs":[{"module":"chipTool","category":"Error","message":"RmFpbGVkIHRvIHNlcmlhbGl6ZSByZXNwb25zZQ=="}]}"#.to_string()
+    })
+}
+
+/// Create a response for onoff read command
+fn create_onoff_read_response(destination_id: &str, endpoint_id: &str, on_state: bool) -> String {
+    let log_message = format!(
+        "Read OnOff attribute from endpoint {}: {}",
+        endpoint_id,
+        if on_state { "ON" } else { "OFF" }
+    );
+    let encoded_log = BASE64.encode(log_message.as_bytes());
+
+    // Create a result object with the attribute value
+    let result = serde_json::json!({
+        "clusterId": "OnOff",
+        "endpointId": endpoint_id,
+        "attributeId": "on-off",
+        "value": on_state
+    });
+
+    let response = ResponseMessage {
+        results: vec![result],
+        logs: vec![LogEntry {
+            module: "chipTool".to_string(),
+            category: "Info".to_string(),
+            message: encoded_log,
+        }],
+    };
+
+    serde_json::to_string(&response).unwrap_or_else(|_| {
+        r#"{"results":[{"error":"FAILURE"}],"logs":[{"module":"chipTool","category":"Error","message":"RmFpbGVkIHRvIHNlcmlhbGl6ZSByZXNwb25zZQ=="}]}"#.to_string()
     })
 }
 

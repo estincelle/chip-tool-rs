@@ -96,6 +96,50 @@ The base64 string decodes to:
 
 The log message is base64-encoded. Decoded: `"Device 305414945 connected successfully"`
 
+#### `onoff read`
+
+Simulates reading the on-off attribute from a Matter device.
+
+**Example Request:**
+```json
+{
+  "cluster": "onoff",
+  "command": "read",
+  "arguments": "base64:eyJkZXN0aW5hdGlvbi1pZCI6ICIweDEyMzQ0MzIxIiwgImVuZHBvaW50LWlkcyI6ICIxIn0=",
+  "command_specifier": "on-off"
+}
+```
+
+The base64 string decodes to:
+```json
+{ "destination-id": "0x12344321", "endpoint-ids": "1" }
+```
+
+**Success Response:**
+```json
+{
+  "results": [
+    {
+      "clusterId": "OnOff",
+      "endpointId": "1",
+      "attributeId": "on-off",
+      "value": true
+    }
+  ],
+  "logs": [
+    {
+      "module": "chipTool",
+      "category": "Info",
+      "message": "UmVhZCBPbk9mZiBhdHRyaWJ1dGUgZnJvbSBlbmRwb2ludCAxOiBPTg=="
+    }
+  ]
+}
+```
+
+The log message is base64-encoded. Decoded: `"Read OnOff attribute from endpoint 1: ON"`
+
+### Error Response Format
+
 **Error Response:**
 ```json
 {
@@ -116,11 +160,13 @@ The log message is base64-encoded. Decoded: `"Device 305414945 connected success
 
 ### Test Scripts
 
-Three test scripts are included:
+Test scripts are included:
 
 1. **test_client.py** - Basic WebSocket connectivity test
 2. **test_wait_for_commissionee.py** - Tests the wait-for-commissionee command
-3. **test_error_case.py** - Tests error handling
+3. **test_onoff_read.py** - Tests the onoff read command
+4. **test_json_prefix.py** - Tests json: prefix handling (YAML test runner compatibility)
+5. **test_error_case.py** - Tests error handling
 
 ### Running Tests
 
