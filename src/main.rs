@@ -1,6 +1,7 @@
 use axum::extract::connect_info::ConnectInfo;
 use axum::{
     Router,
+    extract::State as AxumState,
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     response::IntoResponse,
     routing::any,
@@ -10,9 +11,21 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+
+// Application state to store attribute values
+#[derive(Debug, Clone, Default)]
+struct State {
+    // Map of (cluster_id, endpoint_id, attribute_id) -> value
+    attributes: HashMap<(u16, u16, u16), serde_json::Value>,
+}
+
+type AppState = Arc<RwLock<State>>;
 
 /// A Rust implementation of chip-tool's interactive server
 #[derive(Parser)]
@@ -137,9 +150,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    let app = Router::new().route("/", any(ws_handler)).layer(
-        TraceLayer::new_for_http().make_span_with(DefaultMakeSpan::default().include_headers(true)),
-    );
+    // Create shared application state
+    let state = Arc::new(RwLock::new(State::default()));
+
+    let app = Router::new()
+        .route("/", any(ws_handler))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::default().include_headers(true)),
+        )
+        .with_state(state);
 
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -161,6 +181,7 @@ async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 /// of websocket negotiation). After this completes, the actual switching from HTTP to
 /// websocket protocol will occur.
 async fn ws_handler(
+    AxumState(state): AxumState<AppState>,
     ws: WebSocketUpgrade,
     user_agent: Option<TypedHeader<headers::UserAgent>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -173,11 +194,11 @@ async fn ws_handler(
 
     tracing::info!("Client connected: {} from {}", user_agent, addr);
 
-    ws.on_upgrade(move |socket| handle_socket(socket, addr))
+    ws.on_upgrade(move |socket| handle_socket(socket, addr, state))
 }
 
 /// Actual websocket state machine (one will be spawned per connection)
-async fn handle_socket(socket: WebSocket, who: SocketAddr) {
+async fn handle_socket(socket: WebSocket, who: SocketAddr, state: AppState) {
     tracing::info!("Connection established with {}", who);
 
     let (mut sender, mut receiver) = socket.split();
@@ -191,7 +212,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr) {
                         tracing::info!("[{}] Message received: {}", who, text);
 
                         // Process the command and generate response
-                        if let Some(response) = process_command(&text) {
+                        if let Some(response) = process_command(&text, state.clone()).await {
                             tracing::info!("[{}] Sending response: {}", who, response);
                             if sender.send(Message::Text(response.into())).await.is_err() {
                                 tracing::error!("[{}] Failed to send response", who);
@@ -239,7 +260,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr) {
 }
 
 /// Process incoming commands and generate realistic chip-tool responses
-fn process_command(message: &str) -> Option<String> {
+async fn process_command(message: &str, state: AppState) -> Option<String> {
     // Strip the "json:" prefix if present (used by YAML test runner)
     let json_message = message.strip_prefix("json:").unwrap_or(message);
 
@@ -265,8 +286,10 @@ fn process_command(message: &str) -> Option<String> {
     // Handle different cluster/command combinations
     match (cmd.cluster.to_lowercase().as_str(), cmd.command.as_str()) {
         ("delay", "wait-for-commissionee") => handle_wait_for_commissionee(&cmd.arguments),
-        ("onoff", "read") => handle_onoff_read(&cmd.arguments, &cmd.command_specifier),
-        ("onoff", "write") => handle_onoff_write(&cmd.arguments, &cmd.command_specifier),
+        ("onoff", "read") => handle_onoff_read(&cmd.arguments, &cmd.command_specifier, state).await,
+        ("onoff", "write") => {
+            handle_onoff_write(&cmd.arguments, &cmd.command_specifier, state).await
+        }
         _ => Some(create_error_response(&format!(
             "Unknown command: {} {}",
             cmd.cluster, cmd.command
@@ -314,7 +337,11 @@ fn handle_wait_for_commissionee(arguments: &str) -> Option<String> {
 }
 
 /// Handle the onoff read command
-fn handle_onoff_read(arguments: &str, command_specifier: &Option<String>) -> Option<String> {
+async fn handle_onoff_read(
+    arguments: &str,
+    command_specifier: &Option<String>,
+    state: AppState,
+) -> Option<String> {
     // Decode base64 arguments
     let decoded_args = if let Some(base64_data) = arguments.strip_prefix("base64:") {
         match BASE64.decode(base64_data) {
@@ -355,16 +382,24 @@ fn handle_onoff_read(arguments: &str, command_specifier: &Option<String>) -> Opt
         args.endpoint_ids
     );
 
-    // Simulate reading the attribute based on command_specifier
-    Some(create_onoff_read_response(
-        &args.destination_id,
-        &args.endpoint_ids,
-        attribute_name,
-    ))
+    // Read the attribute value from state
+    Some(
+        create_onoff_read_response(
+            &args.destination_id,
+            &args.endpoint_ids,
+            attribute_name,
+            state,
+        )
+        .await,
+    )
 }
 
 /// Handle the onoff write command
-fn handle_onoff_write(arguments: &str, command_specifier: &Option<String>) -> Option<String> {
+async fn handle_onoff_write(
+    arguments: &str,
+    command_specifier: &Option<String>,
+    state: AppState,
+) -> Option<String> {
     // Decode base64 arguments
     let decoded_args = if let Some(base64_data) = arguments.strip_prefix("base64:") {
         match BASE64.decode(base64_data) {
@@ -406,13 +441,17 @@ fn handle_onoff_write(arguments: &str, command_specifier: &Option<String>) -> Op
         args.attribute_values
     );
 
-    // Simulate writing the attribute
-    Some(create_onoff_write_response(
-        &args.destination_id,
-        &args.endpoint_id,
-        attribute_name,
-        &args.attribute_values,
-    ))
+    // Write the attribute value to state
+    Some(
+        create_onoff_write_response(
+            &args.destination_id,
+            &args.endpoint_id,
+            attribute_name,
+            &args.attribute_values,
+            state,
+        )
+        .await,
+    )
 }
 
 /// Create a success response for wait-for-commissionee
@@ -435,34 +474,40 @@ fn create_success_response(node_id: &str) -> String {
 }
 
 /// Create a response for onoff read command
-fn create_onoff_read_response(
+async fn create_onoff_read_response(
     destination_id: &str,
     endpoint_id: &str,
     attribute_name: &str,
+    state: AppState,
 ) -> String {
     // OnOff cluster ID is 0x0006 (6 in decimal)
     // Parse endpoint_id as integer, default to 1 if parsing fails
     let endpoint_num: u16 = endpoint_id.parse().unwrap_or(1);
 
-    // Map attribute name to attribute ID and determine value type
-    let (attribute_id, value): (u16, serde_json::Value) = match attribute_name {
-        "on-off" => {
-            // on-off attribute ID is 0, returns boolean
-            (0, serde_json::json!(true))
-        }
-        "on-time" => {
-            // on-time attribute ID is 0x4001 (16385), returns uint16 (in centiseconds)
-            // Simulating value of 30 (0.3 seconds)
-            (16385, serde_json::json!(30))
-        }
-        "off-wait-time" => {
-            // off-wait-time attribute ID is 0x4002 (16386), returns uint16
-            (16386, serde_json::json!(0))
-        }
-        _ => {
-            // Default to on-off
-            (0, serde_json::json!(true))
-        }
+    // Map attribute name to attribute ID
+    let attribute_id: u16 = match attribute_name {
+        "on-off" => 0,
+        "on-time" => 16385,
+        "off-wait-time" => 16386,
+        _ => 0,
+    };
+
+    // Read value from state, or use default
+    let value = {
+        let state_lock = state.read().await;
+        state_lock
+            .attributes
+            .get(&(6, endpoint_num, attribute_id))
+            .cloned()
+            .unwrap_or_else(|| {
+                // Default values if not found in state
+                match attribute_name {
+                    "on-off" => serde_json::json!(true),
+                    "on-time" => serde_json::json!(30),
+                    "off-wait-time" => serde_json::json!(0),
+                    _ => serde_json::json!(true),
+                }
+            })
     };
 
     let log_message = format!(
@@ -495,29 +540,45 @@ fn create_onoff_read_response(
 }
 
 /// Create a response for onoff write command
-fn create_onoff_write_response(
+async fn create_onoff_write_response(
     destination_id: &str,
     endpoint_id: &str,
     attribute_name: &str,
     value: &str,
+    state: AppState,
 ) -> String {
-    let log_message = format!(
-        "Write OnOff attribute '{}' to endpoint {}: value={}",
-        attribute_name, endpoint_id, value
-    );
-    let encoded_log = BASE64.encode(log_message.as_bytes());
-
     // OnOff cluster ID is 0x0006 (6 in decimal)
     // Parse endpoint_id as integer, default to 1 if parsing fails
     let endpoint_num: u16 = endpoint_id.parse().unwrap_or(1);
 
     // Map attribute name to attribute ID
-    // on-time is attribute 0x4001 (16385 in decimal)
     let attribute_id = match attribute_name {
         "on-time" => 16385,
         "off-wait-time" => 16386,
         _ => 0,
     };
+
+    // Parse the value and store it in state
+    let parsed_value: serde_json::Value = if let Ok(num) = value.parse::<u16>() {
+        serde_json::json!(num)
+    } else {
+        // Try to parse as JSON value
+        serde_json::from_str(value).unwrap_or_else(|_| serde_json::json!(value))
+    };
+
+    // Write to state
+    {
+        let mut state_lock = state.write().await;
+        state_lock
+            .attributes
+            .insert((6, endpoint_num, attribute_id), parsed_value.clone());
+    }
+
+    let log_message = format!(
+        "Write OnOff attribute '{}' to endpoint {}: value={}",
+        attribute_name, endpoint_id, value
+    );
+    let encoded_log = BASE64.encode(log_message.as_bytes());
 
     // Create a result object for the write operation
     // For successful writes, only return clusterId, endpointId, and attributeId
