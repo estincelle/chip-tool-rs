@@ -124,9 +124,9 @@ async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
-    println!("== WebSocket Server Ready");
-    println!("WebSocket server listening on {}", addr);
-    println!("Waiting for connections...");
+    tracing::info!("== WebSocket Server Ready");
+    tracing::info!("WebSocket server listening on {}", addr);
+    tracing::info!("Waiting for connections...");
 
     axum::serve(
         listener,
@@ -158,7 +158,7 @@ async fn ws_handler(
 
 /// Actual websocket state machine (one will be spawned per connection)
 async fn handle_socket(socket: WebSocket, who: SocketAddr) {
-    println!("Connection established with {}", who);
+    tracing::info!("Connection established with {}", who);
 
     let (mut sender, mut receiver) = socket.split();
 
@@ -168,11 +168,11 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr) {
             Ok(msg) => {
                 match msg {
                     Message::Text(text) => {
-                        println!("[{}] Message received: {}", who, text);
+                        tracing::info!("[{}] Message received: {}", who, text);
 
                         // Process the command and generate response
                         if let Some(response) = process_command(&text) {
-                            println!("[{}] Sending response: {}", who, response);
+                            tracing::info!("[{}] Sending response: {}", who, response);
                             if sender.send(Message::Text(response.into())).await.is_err() {
                                 tracing::error!("[{}] Failed to send response", who);
                                 break;
@@ -180,7 +180,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr) {
                         }
                     }
                     Message::Binary(data) => {
-                        println!(
+                        tracing::info!(
                             "[{}] Binary message received ({} bytes): {:?}",
                             who,
                             data.len(),
@@ -195,12 +195,14 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr) {
                     }
                     Message::Close(close_frame) => {
                         if let Some(cf) = close_frame {
-                            println!(
+                            tracing::info!(
                                 "[{}] Connection closed: code={}, reason={}",
-                                who, cf.code, cf.reason
+                                who,
+                                cf.code,
+                                cf.reason
                             );
                         } else {
-                            println!("[{}] Connection closed", who);
+                            tracing::info!("[{}] Connection closed", who);
                         }
                         break;
                     }
@@ -213,7 +215,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr) {
         }
     }
 
-    println!("Connection terminated with {}", who);
+    tracing::info!("Connection terminated with {}", who);
 }
 
 /// Process incoming commands and generate realistic chip-tool responses
@@ -230,9 +232,10 @@ fn process_command(message: &str) -> Option<String> {
         }
     };
 
-    println!(
+    tracing::info!(
         "Processing command: cluster={}, command={}",
-        cmd.cluster, cmd.command
+        cmd.cluster,
+        cmd.command
     );
 
     // Handle different cluster/command combinations
@@ -267,7 +270,7 @@ fn handle_wait_for_commissionee(arguments: &str) -> Option<String> {
         return Some(create_error_response("Arguments must be base64 encoded"));
     };
 
-    println!("Decoded arguments: {}", decoded_args);
+    tracing::info!("Decoded arguments: {}", decoded_args);
 
     // Parse the decoded arguments
     let args: WaitForCommissioneeArgs = match serde_json::from_str(&decoded_args) {
@@ -278,7 +281,7 @@ fn handle_wait_for_commissionee(arguments: &str) -> Option<String> {
         }
     };
 
-    println!("Waiting for commissionee with nodeId: {}", args.node_id);
+    tracing::info!("Waiting for commissionee with nodeId: {}", args.node_id);
 
     // Simulate a successful connection to the device
     Some(create_success_response(&args.node_id))
