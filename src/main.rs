@@ -333,7 +333,8 @@ fn handle_wait_for_commissionee(arguments: &str) -> Option<String> {
     tracing::info!("Waiting for commissionee with nodeId: {}", args.node_id);
 
     // Simulate a successful connection to the device
-    Some(create_success_response(&args.node_id))
+    // Some(create_success_response(&args.node_id))
+    None
 }
 
 /// Handle the onoff read command
@@ -383,15 +384,16 @@ async fn handle_onoff_read(
     );
 
     // Read the attribute value from state
-    Some(
-        create_onoff_read_response(
-            &args.destination_id,
-            &args.endpoint_ids,
-            attribute_name,
-            state,
-        )
-        .await,
-    )
+    // Some(
+    //     create_onoff_read_response(
+    //         &args.destination_id,
+    //         &args.endpoint_ids,
+    //         attribute_name,
+    //         state,
+    //     )
+    //     .await,
+    // )
+    None
 }
 
 /// Handle the onoff write command
@@ -442,16 +444,17 @@ async fn handle_onoff_write(
     );
 
     // Write the attribute value to state
-    Some(
-        create_onoff_write_response(
-            &args.destination_id,
-            &args.endpoint_id,
-            attribute_name,
-            &args.attribute_values,
-            state,
-        )
-        .await,
-    )
+    // Some(
+    //     create_onoff_write_response(
+    //         &args.destination_id,
+    //         &args.endpoint_id,
+    //         attribute_name,
+    //         &args.attribute_values,
+    //         state,
+    //     )
+    //     .await,
+    // )
+    None
 }
 
 /// Create a success response for wait-for-commissionee
